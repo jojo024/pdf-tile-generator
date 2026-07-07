@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
 
 from pdf_tile_generator.models.settings import (
     CAPTION_FONTS,
+    PAPER_AUTO,
+    PAPER_CUSTOM,
     PAPER_SIZES,
     CaptionSettings,
     ImageFitMode,
@@ -127,8 +129,22 @@ class SettingsPanel(QWidget):
     def _build_page_group(self) -> QGroupBox:
         group = QGroupBox("Page")
         self.paper_combo = QComboBox()
-        self.paper_combo.addItems(list(PAPER_SIZES.keys()))
-        self.paper_combo.setToolTip("Paper size of the generated PDF")
+        self.paper_combo.addItems([*PAPER_SIZES.keys(), PAPER_CUSTOM, PAPER_AUTO])
+        self.paper_combo.setToolTip(
+            "Paper size of the generated PDF. Custom: enter exact dimensions. "
+            "Auto: the page grows to fit the grid at your chosen tile size, so "
+            "large grids keep full-size tiles instead of shrinking."
+        )
+        self.custom_width_spin = _mm_spin(30, 2000, "Custom page width")
+        self.custom_width_spin.setValue(_mm(595.2756))
+        self.custom_height_spin = _mm_spin(30, 2000, "Custom page height")
+        self.custom_height_spin.setValue(_mm(841.8898))
+        self.tile_width_spin = _mm_spin(20, 400, "Tile width when the page size is Auto")
+        self.tile_width_spin.setValue(_mm(226.77))
+        self.tile_height_spin = _mm_spin(
+            20, 400, "Height of each tile's image area when the page size is Auto"
+        )
+        self.tile_height_spin.setValue(_mm(170.08))
         self.orientation_combo = QComboBox()
         self.orientation_combo.addItems(["Portrait", "Landscape"])
         self.margin_spin = _mm_spin(0, 100, "Blank border around the page edge")
@@ -142,15 +158,35 @@ class SettingsPanel(QWidget):
 
         form = QFormLayout(group)
         form.addRow("Paper size:", self.paper_combo)
+        form.addRow("Custom width:", self.custom_width_spin)
+        form.addRow("Custom height:", self.custom_height_spin)
+        form.addRow("Auto tile width:", self.tile_width_spin)
+        form.addRow("Auto tile height:", self.tile_height_spin)
         form.addRow("Orientation:", self.orientation_combo)
         form.addRow("Margins:", self.margin_spin)
         form.addRow("Tile spacing (horizontal):", self.spacing_x_spin)
         form.addRow("Tile spacing (vertical):", self.spacing_y_spin)
         form.addRow("Caption spacing:", self.caption_spacing_spin)
 
+        def sync_paper_mode() -> None:
+            paper = self.paper_combo.currentText()
+            self.custom_width_spin.setEnabled(paper == PAPER_CUSTOM)
+            self.custom_height_spin.setEnabled(paper == PAPER_CUSTOM)
+            self.tile_width_spin.setEnabled(paper == PAPER_AUTO)
+            self.tile_height_spin.setEnabled(paper == PAPER_AUTO)
+            # Orientation is meaningless when dimensions are explicit or derived.
+            self.orientation_combo.setEnabled(paper not in (PAPER_CUSTOM, PAPER_AUTO))
+
+        self._sync_paper_mode = sync_paper_mode
+        sync_paper_mode()
+        self.paper_combo.currentIndexChanged.connect(sync_paper_mode)
         self.paper_combo.currentIndexChanged.connect(self._emit_changed)
         self.orientation_combo.currentIndexChanged.connect(self._emit_changed)
         for spin in (
+            self.custom_width_spin,
+            self.custom_height_spin,
+            self.tile_width_spin,
+            self.tile_height_spin,
             self.margin_spin,
             self.spacing_x_spin,
             self.spacing_y_spin,
@@ -216,6 +252,19 @@ class SettingsPanel(QWidget):
         self.title_case_check.setToolTip(
             'Capitalize caption words: "living_room.jpg" becomes "Living Room"'
         )
+        self.description_check = QCheckBox("Show descriptions under captions")
+        self.description_check.setChecked(True)
+        self.description_check.setToolTip(
+            "Render the per-image Description column beneath each caption"
+        )
+        self.description_size_spin = QDoubleSpinBox()
+        self.description_size_spin.setRange(5, 24)
+        self.description_size_spin.setValue(8)
+        self.description_size_spin.setDecimals(1)
+        self.description_size_spin.setSuffix(" pt")
+        self.description_lines_spin = QSpinBox()
+        self.description_lines_spin.setRange(1, 6)
+        self.description_lines_spin.setValue(2)
 
         form = QFormLayout(group)
         form.addRow("Font:", self.font_combo)
@@ -225,6 +274,9 @@ class SettingsPanel(QWidget):
         form.addRow("Maximum lines:", self.max_lines_spin)
         form.addRow(self.wrap_check)
         form.addRow(self.title_case_check)
+        form.addRow(self.description_check)
+        form.addRow("Description size:", self.description_size_spin)
+        form.addRow("Description lines:", self.description_lines_spin)
 
         self.font_combo.currentIndexChanged.connect(self._emit_changed)
         self.alignment_combo.currentIndexChanged.connect(self._emit_changed)
@@ -233,6 +285,9 @@ class SettingsPanel(QWidget):
         self.wrap_check.toggled.connect(self._emit_changed)
         self.title_case_check.toggled.connect(self._emit_changed)
         self.title_case_check.toggled.connect(self.titleCaseChanged.emit)
+        self.description_check.toggled.connect(self._emit_changed)
+        self.description_size_spin.valueChanged.connect(self._emit_changed)
+        self.description_lines_spin.valueChanged.connect(self._emit_changed)
         return group
 
     def _build_output_group(self) -> QGroupBox:
@@ -295,6 +350,10 @@ class SettingsPanel(QWidget):
                 spacing_x=_pt(self.spacing_x_spin.value()),
                 spacing_y=_pt(self.spacing_y_spin.value()),
                 caption_spacing=_pt(self.caption_spacing_spin.value()),
+                custom_width=_pt(self.custom_width_spin.value()),
+                custom_height=_pt(self.custom_height_spin.value()),
+                auto_tile_width=_pt(self.tile_width_spin.value()),
+                auto_tile_image_height=_pt(self.tile_height_spin.value()),
             ),
             layout=LayoutSettings(
                 auto_layout=self.auto_radio.isChecked(),
@@ -315,6 +374,9 @@ class SettingsPanel(QWidget):
                 max_lines=self.max_lines_spin.value(),
                 wrap_text=self.wrap_check.isChecked(),
                 title_case=self.title_case_check.isChecked(),
+                description_enabled=self.description_check.isChecked(),
+                description_font_size=self.description_size_spin.value(),
+                description_max_lines=self.description_lines_spin.value(),
             ),
             output=OutputSettings(
                 output_path=self.output_edit.text().strip(),
@@ -328,10 +390,16 @@ class SettingsPanel(QWidget):
         for widget in blockers:
             widget.blockSignals(True)
         try:
+            if self.paper_combo.findText(settings.page.paper_size) < 0:
+                settings.page.paper_size = "A4"  # unknown stored value
             self.paper_combo.setCurrentText(settings.page.paper_size)
             self.orientation_combo.setCurrentText(
                 "Landscape" if settings.page.landscape else "Portrait"
             )
+            self.custom_width_spin.setValue(_mm(settings.page.custom_width))
+            self.custom_height_spin.setValue(_mm(settings.page.custom_height))
+            self.tile_width_spin.setValue(_mm(settings.page.auto_tile_width))
+            self.tile_height_spin.setValue(_mm(settings.page.auto_tile_image_height))
             self.margin_spin.setValue(_mm(settings.page.margin))
             self.spacing_x_spin.setValue(_mm(settings.page.spacing_x))
             self.spacing_y_spin.setValue(_mm(settings.page.spacing_y))
@@ -362,10 +430,14 @@ class SettingsPanel(QWidget):
             self.max_lines_spin.setValue(settings.caption.max_lines)
             self.wrap_check.setChecked(settings.caption.wrap_text)
             self.title_case_check.setChecked(settings.caption.title_case)
+            self.description_check.setChecked(settings.caption.description_enabled)
+            self.description_size_spin.setValue(settings.caption.description_font_size)
+            self.description_lines_spin.setValue(settings.caption.description_max_lines)
 
             self.output_edit.setText(settings.output.output_path)
             self.open_after_check.setChecked(settings.output.open_after_generation)
         finally:
             for widget in blockers:
                 widget.blockSignals(False)
+        self._sync_paper_mode()
         self.settingsChanged.emit()

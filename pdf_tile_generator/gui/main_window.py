@@ -152,6 +152,7 @@ class MainWindow(QMainWindow):
         settings = self.settings_panel.settings()
         paths = self.image_list.paths()
         captions = self.image_list.captions()
+        descriptions = self.image_list.descriptions()
         if not paths:
             dialogs.show_warning(self, "No images", "Add at least one image first.")
             return
@@ -167,7 +168,10 @@ class MainWindow(QMainWindow):
         if output.exists() and not dialogs.confirm_overwrite(self, str(output)):
             return
 
-        jobs = [TileJob(path=p, caption=c) for p, c in zip(paths, captions, strict=True)]
+        jobs = [
+            TileJob(path=p, caption=c, description=d)
+            for p, c, d in zip(paths, captions, descriptions, strict=True)
+        ]
         self._worker = PdfWorker(settings, jobs)
         self._worker.progressChanged.connect(self._on_progress)
         self._worker.succeeded.connect(self._on_success)

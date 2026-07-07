@@ -10,7 +10,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from pdf_tile_generator.models.settings import CaptionSettings, LayoutSettings, PageSettings
+from pdf_tile_generator.models.settings import (
+    PAPER_AUTO,
+    CaptionSettings,
+    LayoutSettings,
+    PageSettings,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,40 @@ def grid_for_count(images_per_page: int, page_width: float, page_height: float) 
     return (best[2], best[3])
 
 
+def _auto_grid(layout: LayoutSettings) -> tuple[int, int]:
+    """Grid for auto paper size: aim for a roughly square page."""
+    if layout.auto_layout:
+        count = max(1, layout.images_per_page)
+        columns = max(1, math.ceil(math.sqrt(count)))
+        return (math.ceil(count / columns), columns)
+    return (max(1, layout.rows), max(1, layout.columns))
+
+
+def effective_page_size(
+    page: PageSettings,
+    layout: LayoutSettings,
+    caption: CaptionSettings,
+) -> tuple[float, float]:
+    """Resolve the final page (width, height) in points.
+
+    Named sheets and custom sizes come straight from the settings. With
+    :data:`PAPER_AUTO` the page is sized around the grid instead: every tile
+    gets ``auto_tile_width`` × (``auto_tile_image_height`` + caption block),
+    so the paper adapts to the grid rather than the grid being squeezed into
+    a fixed sheet.
+    """
+    if page.paper_size != PAPER_AUTO:
+        return page.page_size
+    rows, columns = _auto_grid(layout)
+    tile_width = max(36.0, page.auto_tile_width)
+    tile_height = (
+        max(36.0, page.auto_tile_image_height) + caption.block_height() + page.caption_spacing
+    )
+    width = 2 * page.margin + columns * tile_width + (columns - 1) * page.spacing_x
+    height = 2 * page.margin + rows * tile_height + (rows - 1) * page.spacing_y
+    return (width, height)
+
+
 def compute_page_tiles(
     page: PageSettings,
     layout: LayoutSettings,
@@ -76,8 +115,11 @@ def compute_page_tiles(
         LayoutError: if margins/spacing leave no room for tiles, or the
             caption block is taller than the tile itself.
     """
-    page_width, page_height = page.page_size
-    rows, columns = layout.effective_grid(page_width, page_height)
+    page_width, page_height = effective_page_size(page, layout, caption)
+    if page.paper_size == PAPER_AUTO:
+        rows, columns = _auto_grid(layout)
+    else:
+        rows, columns = layout.effective_grid(page_width, page_height)
 
     usable_width = page_width - 2 * page.margin - (columns - 1) * page.spacing_x
     usable_height = page_height - 2 * page.margin - (rows - 1) * page.spacing_y

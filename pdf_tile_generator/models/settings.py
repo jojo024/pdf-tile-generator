@@ -20,6 +20,10 @@ PAPER_SIZES: dict[str, tuple[float, float]] = {
     "A3": (841.8898, 1190.5512),
 }
 
+#: Sentinel paper-size names that are not fixed sheets.
+PAPER_CUSTOM = "Custom"
+PAPER_AUTO = "Auto (fit grid)"
+
 #: Fonts available for captions (ReportLab built-in Type 1 families;
 #: no embedding required, render identically on every platform).
 CAPTION_FONTS: dict[str, str] = {
@@ -48,7 +52,14 @@ class TextAlignment(StrEnum):
 
 @dataclass
 class PageSettings:
-    """Paper size, orientation, and page-level spacing."""
+    """Paper size, orientation, and page-level spacing.
+
+    ``paper_size`` may be a named sheet (A4, Letter, …), :data:`PAPER_CUSTOM`
+    (use ``custom_width``/``custom_height``), or :data:`PAPER_AUTO` (the page
+    grows to fit the grid at ``auto_tile_width`` × ``auto_tile_image_height``
+    per tile — use :func:`pdf_tile_generator.pdf.layout.effective_page_size`
+    to resolve the final dimensions).
+    """
 
     paper_size: str = "A4"
     landscape: bool = False
@@ -56,10 +67,22 @@ class PageSettings:
     spacing_x: float = 12.0  # horizontal gap between tiles
     spacing_y: float = 12.0  # vertical gap between tiles
     caption_spacing: float = 4.0  # gap between image and caption
+    custom_width: float = 595.2756  # points; used when paper_size == PAPER_CUSTOM
+    custom_height: float = 841.8898
+    auto_tile_width: float = 226.77  # 80 mm; used when paper_size == PAPER_AUTO
+    auto_tile_image_height: float = 170.08  # 60 mm image area per tile
 
     @property
     def page_size(self) -> tuple[float, float]:
-        """Page (width, height) in points, honoring orientation."""
+        """Fixed page (width, height) in points, honoring orientation.
+
+        For :data:`PAPER_AUTO` this returns a nominal A4 fallback — callers
+        that support auto sizing must use ``layout.effective_page_size``.
+        """
+        if self.paper_size == PAPER_CUSTOM:
+            width = max(72.0, self.custom_width)
+            height = max(72.0, self.custom_height)
+            return (width, height)  # orientation is implicit in the numbers
         width, height = PAPER_SIZES.get(self.paper_size, PAPER_SIZES["A4"])
         if self.landscape:
             return (height, width)
@@ -95,7 +118,12 @@ class ImageSettings:
 
 @dataclass
 class CaptionSettings:
-    """Caption text appearance."""
+    """Caption (and optional description) text appearance.
+
+    The description is a free-text second block rendered beneath the caption
+    in a smaller size; its text comes from the per-image Description column
+    in the image list (editable by hand or via CSV import).
+    """
 
     font: str = "Helvetica"
     font_size: float = 10.0
@@ -104,15 +132,26 @@ class CaptionSettings:
     max_lines: int = 2
     wrap_text: bool = True
     title_case: bool = True
+    description_enabled: bool = True
+    description_font_size: float = 8.0
+    description_max_lines: int = 2
 
     @property
     def line_height(self) -> float:
         """Vertical space for one line of caption text, in points."""
         return self.font_size * 1.25
 
+    @property
+    def description_line_height(self) -> float:
+        """Vertical space for one line of description text, in points."""
+        return self.description_font_size * 1.25
+
     def block_height(self) -> float:
-        """Total vertical space reserved for the caption block."""
-        return self.line_height * max(1, self.max_lines)
+        """Total vertical space reserved for the caption + description block."""
+        height = self.line_height * max(1, self.max_lines)
+        if self.description_enabled:
+            height += 2.0 + self.description_line_height * max(1, self.description_max_lines)
+        return height
 
 
 @dataclass

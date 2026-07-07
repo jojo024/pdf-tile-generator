@@ -12,8 +12,10 @@ from PySide6.QtCore import QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -22,12 +24,20 @@ from PySide6.QtWidgets import (
 )
 
 from pdf_tile_generator.captions import generate_caption
+from pdf_tile_generator.captions.csv_io import (
+    CaptionCSVError,
+    lookup,
+    read_caption_csv,
+    write_caption_csv,
+)
 from pdf_tile_generator.gui.workers import ThumbnailSignals, ThumbnailTask
 from pdf_tile_generator.images.loader import is_supported_image
 
 COL_THUMB = 0
 COL_FILENAME = 1
 COL_CAPTION = 2
+COL_DESCRIPTION = 3
+_COLUMN_COUNT = 4
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole
 _CUSTOM_CAPTION_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -39,9 +49,9 @@ class ImageTable(QTableWidget):
     filesDropped = Signal(list)  # list[str]
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(0, 3, parent)
+        super().__init__(0, _COLUMN_COUNT, parent)
         self.setAcceptDrops(True)
-        self.setHorizontalHeaderLabels(["Preview", "Filename", "Caption"])
+        self.setHorizontalHeaderLabels(["Preview", "Filename", "Caption", "Description"])
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setIconSize(QSize(72, 72))
@@ -52,6 +62,7 @@ class ImageTable(QTableWidget):
         header.resizeSection(COL_THUMB, 90)
         header.setSectionResizeMode(COL_FILENAME, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_CAPTION, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_DESCRIPTION, QHeaderView.ResizeMode.Stretch)
         self.setAccessibleName("Selected images")
         self.setToolTip("Drag image files here, or use the Add Images button.")
 
@@ -109,6 +120,15 @@ class ImageListWidget(QWidget):
         self.clear_button = QPushButton("Clear All")
         self.up_button = QPushButton("Move Up")
         self.down_button = QPushButton("Move Down")
+        self.import_csv_button = QPushButton("Import CSV…")
+        self.import_csv_button.setToolTip(
+            "Bulk-load captions and descriptions from a CSV file with columns: "
+            "filename, caption, description"
+        )
+        self.export_csv_button = QPushButton("Export CSV…")
+        self.export_csv_button.setToolTip(
+            "Save the current captions and descriptions to a CSV file"
+        )
         self.remove_button.setToolTip("Remove the selected images from the list")
         self.up_button.setToolTip("Move the selected image up (Alt+Up)")
         self.down_button.setToolTip("Move the selected image down (Alt+Down)")
@@ -119,6 +139,8 @@ class ImageListWidget(QWidget):
         self.clear_button.clicked.connect(self.clear_all)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
+        self.import_csv_button.clicked.connect(self._import_csv_dialog)
+        self.export_csv_button.clicked.connect(self._export_csv_dialog)
 
         buttons = QHBoxLayout()
         for button in (
@@ -127,6 +149,8 @@ class ImageListWidget(QWidget):
             self.clear_button,
             self.up_button,
             self.down_button,
+            self.import_csv_button,
+            self.export_csv_button,
         ):
             buttons.addWidget(button)
         buttons.addStretch(1)
@@ -148,6 +172,12 @@ class ImageListWidget(QWidget):
     def captions(self) -> list[str]:
         """All captions in display order."""
         return [self.table.item(row, COL_CAPTION).text() for row in range(self.table.rowCount())]
+
+    def descriptions(self) -> list[str]:
+        """All descriptions in display order."""
+        return [
+            self.table.item(row, COL_DESCRIPTION).text() for row in range(self.table.rowCount())
+        ]
 
     def count(self) -> int:
         """Number of images in the list."""
@@ -178,9 +208,15 @@ class ImageListWidget(QWidget):
                 caption_item.setData(_CUSTOM_CAPTION_ROLE, False)
                 caption_item.setToolTip("Double-click to edit this caption")
 
+                description_item = QTableWidgetItem("")
+                description_item.setToolTip(
+                    "Optional text shown under the caption (double-click to edit)"
+                )
+
                 self.table.setItem(row, COL_THUMB, thumb_item)
                 self.table.setItem(row, COL_FILENAME, name_item)
                 self.table.setItem(row, COL_CAPTION, caption_item)
+                self.table.setItem(row, COL_DESCRIPTION, description_item)
                 pool.start(ThumbnailTask(path, self._thumbnail_signals))
         finally:
             self._updating = False
@@ -218,12 +254,12 @@ class ImageListWidget(QWidget):
             self._updating = False
         self.table.clearSelection()
         for row in rows:
-            for column in range(3):
+            for column in range(_COLUMN_COUNT):
                 self.table.item(row + delta, column).setSelected(True)
         self.listChanged.emit()
 
     def _swap_rows(self, row_a: int, row_b: int) -> None:
-        for column in range(3):
+        for column in range(_COLUMN_COUNT):
             item_a = self.table.takeItem(row_a, column)
             item_b = self.table.takeItem(row_b, column)
             self.table.setItem(row_a, column, item_b)
@@ -249,6 +285,72 @@ class ImageListWidget(QWidget):
         if self._updating or item.column() != COL_CAPTION:
             return
         item.setData(_CUSTOM_CAPTION_ROLE, True)
+
+    # ------------------------------------------------------------ CSV bulk
+
+    def apply_csv(self, path: str) -> int:
+        """Apply captions/descriptions from a CSV file; returns rows matched.
+
+        Raises:
+            CaptionCSVError: if the file is unreadable or malformed.
+        """
+        rows = read_caption_csv(path)
+        matched = 0
+        self._updating = True
+        try:
+            for row in range(self.table.rowCount()):
+                image_path = self.table.item(row, COL_FILENAME).data(_PATH_ROLE)
+                entry = lookup(rows, image_path)
+                if entry is None:
+                    continue
+                matched += 1
+                if entry.caption is not None:
+                    caption_item = self.table.item(row, COL_CAPTION)
+                    caption_item.setText(entry.caption)
+                    caption_item.setData(_CUSTOM_CAPTION_ROLE, True)
+                if entry.description is not None:
+                    self.table.item(row, COL_DESCRIPTION).setText(entry.description)
+        finally:
+            self._updating = False
+        return matched
+
+    def _import_csv_dialog(self) -> None:
+        if not self.count():
+            QMessageBox.information(
+                self, "No images", "Add images first, then import their captions."
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import captions CSV", "", "CSV files (*.csv);;All files (*.*)"
+        )
+        if not path:
+            return
+        try:
+            matched = self.apply_csv(path)
+        except CaptionCSVError as exc:
+            QMessageBox.warning(self, "Could not import CSV", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "CSV imported",
+            f"Updated {matched} of {self.count()} images "
+            f"(matched by filename).",
+        )
+
+    def _export_csv_dialog(self) -> None:
+        if not self.count():
+            QMessageBox.information(self, "No images", "There is nothing to export yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export captions CSV", "captions.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        entries = list(zip(self.paths(), self.captions(), self.descriptions(), strict=True))
+        try:
+            write_caption_csv(path, entries)
+        except CaptionCSVError as exc:
+            QMessageBox.warning(self, "Could not export CSV", str(exc))
 
     # ----------------------------------------------------------- thumbnails
 

@@ -26,7 +26,12 @@ from pdf_tile_generator.models.settings import (
     ProjectSettings,
     TextAlignment,
 )
-from pdf_tile_generator.pdf.layout import TileRect, compute_page_tiles, fit_dimensions
+from pdf_tile_generator.pdf.layout import (
+    TileRect,
+    compute_page_tiles,
+    effective_page_size,
+    fit_dimensions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +49,11 @@ class PDFGenerationCancelled(Exception):
 
 @dataclass
 class TileJob:
-    """One image to place in the PDF, with its caption text."""
+    """One image to place in the PDF, with its caption and description text."""
 
     path: str
     caption: str
+    description: str = ""
 
 
 @dataclass
@@ -197,8 +203,9 @@ class PDFGenerator:
         skipped: list[tuple[str, str]] = []
         pages = 0
 
+        page_size = effective_page_size(settings.page, settings.layout, settings.caption)
         try:
-            canvas = Canvas(str(output_path), pagesize=settings.page.page_size)
+            canvas = Canvas(str(output_path), pagesize=page_size)
         except OSError as exc:
             raise PDFGenerationError(
                 f"Cannot write to {output_path}. Check the folder exists and you "
@@ -285,7 +292,10 @@ class PDFGenerator:
         finally:
             image.close()
 
-        self._draw_caption(canvas, tile, job.caption, font_name, caption_color)
+        # Anchor the text to the image's real bottom edge, not the tile cell:
+        # a wide (e.g. 16:9) image centered in a taller cell would otherwise
+        # leave a confusing gap between the picture and its caption.
+        self._draw_caption(canvas, tile, job, font_name, caption_color, anchor_top=y)
 
     def _draw_placeholder(
         self, canvas: Canvas, tile: TileRect, job: TileJob, font_name: str
@@ -310,43 +320,76 @@ class PDFGenerator:
             "(image unavailable)",
         )
         canvas.restoreState()
-        self._draw_caption(canvas, tile, job.caption, font_name, HexColor("#888888"))
+        self._draw_caption(
+            canvas,
+            tile,
+            job,
+            font_name,
+            HexColor("#888888"),
+            anchor_top=tile.image_y + padding,
+        )
 
     def _draw_caption(
         self,
         canvas: Canvas,
         tile: TileRect,
-        caption: str,
+        job: TileJob,
         font_name: str,
         color: HexColor,
+        anchor_top: float,
     ) -> None:
-        """Draw the wrapped caption block beneath the image area."""
+        """Draw the caption (and description) starting just below ``anchor_top``.
+
+        ``anchor_top`` is the y coordinate of the drawn image's bottom edge, so
+        the text always hugs the actual picture regardless of how much empty
+        space the tile cell has around it.
+        """
         settings = self._settings.caption
-        if not caption:
+        if not job.caption and not job.description:
             return
         max_width = tile.width - 2 * self._settings.image.tile_padding
-        lines = _wrap_caption(
-            caption,
-            font_name,
-            settings.font_size,
-            max_width,
-            settings.max_lines,
-            settings.wrap_text,
-        )
+
+        def draw_lines(lines: list[str], font_size: float, baseline: float) -> float:
+            canvas.setFont(font_name, font_size)
+            for line in lines:
+                if settings.alignment is TextAlignment.CENTER:
+                    canvas.drawCentredString(tile.x + tile.width / 2, baseline, line)
+                elif settings.alignment is TextAlignment.RIGHT:
+                    right_edge = tile.x + tile.width - self._settings.image.tile_padding
+                    canvas.drawRightString(right_edge, baseline, line)
+                else:
+                    canvas.drawString(tile.x + self._settings.image.tile_padding, baseline, line)
+                baseline -= font_size * 1.25
+            return baseline
+
         canvas.saveState()
-        canvas.setFont(font_name, settings.font_size)
         canvas.setFillColor(color)
-        # First baseline sits one line below the caption block top (minus spacing).
-        baseline = tile.caption_top - self._settings.page.caption_spacing - settings.font_size
-        for line in lines:
-            if settings.alignment is TextAlignment.CENTER:
-                canvas.drawCentredString(tile.x + tile.width / 2, baseline, line)
-            elif settings.alignment is TextAlignment.RIGHT:
-                right_edge = tile.x + tile.width - self._settings.image.tile_padding
-                canvas.drawRightString(right_edge, baseline, line)
-            else:
-                canvas.drawString(tile.x + self._settings.image.tile_padding, baseline, line)
-            baseline -= settings.line_height
+        # "text_top" is where the next text block starts, walking downward.
+        text_top = anchor_top - self._settings.page.caption_spacing
+        if job.caption:
+            lines = _wrap_caption(
+                job.caption,
+                font_name,
+                settings.font_size,
+                max_width,
+                settings.max_lines,
+                settings.wrap_text,
+            )
+            next_baseline = draw_lines(lines, settings.font_size, text_top - settings.font_size)
+            last_baseline = next_baseline + settings.line_height
+            text_top = last_baseline - settings.font_size * 0.25 - 2.0
+        if settings.description_enabled and job.description:
+            lines = _wrap_caption(
+                job.description,
+                font_name,
+                settings.description_font_size,
+                max_width,
+                settings.description_max_lines,
+                settings.wrap_text,
+            )
+            draw_lines(
+                lines, settings.description_font_size, text_top - settings.description_font_size
+            )
         canvas.restoreState()
 
     @staticmethod

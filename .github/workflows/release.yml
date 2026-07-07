@@ -6,6 +6,9 @@ name: Release builds
 on:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch: {}  # run manually with --ref <tag> to rebuild a release's assets
 
 permissions:
   contents: write

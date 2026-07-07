@@ -47,7 +47,11 @@ def generate_caption(filename: str | PurePath, title_case: bool = True) -> str:
         The generated caption. May be an empty string for degenerate names
         such as ``.jpg``.
     """
-    stem = PurePath(filename).stem
+    # Take the basename treating both / and \ as separators, so Windows-style
+    # paths caption identically on every platform (PurePath alone would keep
+    # "C:\photos\" as part of the stem on POSIX).
+    basename = str(filename).replace("\\", "/").rsplit("/", 1)[-1]
+    stem = PurePath(basename).stem
     if stem.startswith("."):
         # Names like ".jpg" are pure extensions (dotfile semantics); no base name.
         stem = ""

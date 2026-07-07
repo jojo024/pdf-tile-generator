@@ -13,7 +13,12 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from pdf_tile_generator.models.settings import ProjectSettings
-from pdf_tile_generator.pdf.layout import LayoutError, compute_page_tiles, page_count
+from pdf_tile_generator.pdf.layout import (
+    LayoutError,
+    compute_page_tiles,
+    effective_page_size,
+    page_count,
+)
 
 
 class PagePreview(QWidget):
@@ -62,7 +67,9 @@ class PagePreview(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), self.palette().window())
 
-        page_w, page_h = self._settings.page.page_size
+        page_w, page_h = effective_page_size(
+            self._settings.page, self._settings.layout, self._settings.caption
+        )
         available_w = self.width() - 16
         available_h = self.height() - 16
         scale = min(available_w / page_w, available_h / page_h)

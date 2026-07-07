@@ -16,8 +16,11 @@ Help → About — and only when you click it.
 - Add images by file dialog or **drag-and-drop**; reorder, remove, multi-select
 - Supported formats: JPG, JPEG, PNG, BMP, TIF, TIFF, WEBP
 - Grid layout: explicit **rows × columns** or automatic from **images per page**
-- Paper sizes A4 / Letter / Legal / A3, portrait or landscape, adjustable
-  margins, tile spacing, and caption spacing
+- Paper sizes A4 / Letter / Legal / A3, **custom dimensions**, or **Auto** —
+  the page grows to fit the grid at your chosen tile size; portrait or
+  landscape, adjustable margins, tile spacing, and caption spacing
+- Per-image **descriptions** rendered under captions, with **CSV
+  import/export** for bulk editing (`filename,caption,description`)
 - Image placement: **fit within tile** or **crop to fill** (aspect ratio always preserved)
 - Caption options: font, size, alignment, color, max lines, wrapping, Title Case
 - **Per-image caption editing** — double-click any caption in the list
