@@ -12,11 +12,23 @@ from pdf_tile_generator.update.checker import (
     is_newer_version,
     parse_version,
 )
+from pdf_tile_generator.update.velopack_update import (
+    PendingUpdate,
+    UpdateUnavailableError,
+    VelopackError,
+    VelopackUpdater,
+    run_startup_hook,
+)
 
 __all__ = [
+    "PendingUpdate",
     "ReleaseInfo",
     "UpdateCheckError",
+    "UpdateUnavailableError",
+    "VelopackError",
+    "VelopackUpdater",
     "check_for_update",
     "is_newer_version",
     "parse_version",
+    "run_startup_hook",
 ]

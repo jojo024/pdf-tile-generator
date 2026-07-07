@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 — 2026-07-07
+
+### Added
+- **In-app updates (Windows)** via [Velopack](https://velopack.io). The
+  Windows build now ships as a per-user installer (`Setup.exe`); once
+  installed, **Help → About → Check for Updates** downloads only what changed
+  (delta updates, typically 1–5 MB rather than the full ~55 MB) and installs
+  on restart. No admin rights, no reinstall.
+- A **portable Windows zip** is still provided for users who prefer not to
+  install; it uses the manual "open download page" update flow.
+
+### Notes
+- macOS and Linux continue to ship as archives with the manual update flow.
+- The update check remains **user-initiated only** — nothing is downloaded or
+  installed in the background.
+
 ## 1.2.0 — 2026-07-07
 
 ### Added

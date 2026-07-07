@@ -5,8 +5,10 @@ __pycache__/
 venv/
 build/
 dist/
+Releases/
 *.zip
 *.tar.gz
+*.nupkg
 .coverage
 htmlcov/
 .pytest_cache/

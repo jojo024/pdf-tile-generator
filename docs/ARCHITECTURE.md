@@ -41,9 +41,13 @@ pdf_tile_generator/
 │   │                      supported-extension checks, EXIF transpose.
 │   └── thumbnail.py       Bounded-size thumbnails using Pillow draft mode.
 ├── update/
-│   └── checker.py         Manual update check (stdlib urllib, one HTTPS GET
-│                          to the GitHub Releases API, only on user click).
-│                          The application's sole network access.
+│   ├── checker.py         Manual update check (stdlib urllib, one HTTPS GET
+│   │                      to the GitHub Releases API) — the fallback used by
+│   │                      source and portable builds.
+│   └── velopack_update.py Velopack SDK wrapper: startup hook + UpdateManager/
+│                          GithubSource for in-app delta updates on installed
+│                          Windows builds. Degrades to the checker elsewhere.
+│                          The application's only network access, user-initiated.
 └── gui/
     ├── main_window.py     Assembles everything; generation workflow;
     │                      QSettings persistence (window state + settings).

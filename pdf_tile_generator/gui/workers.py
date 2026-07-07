@@ -24,7 +24,13 @@ from pdf_tile_generator.pdf.generator import (
     PDFGenerator,
     TileJob,
 )
-from pdf_tile_generator.update import UpdateCheckError, check_for_update
+from pdf_tile_generator.update import (
+    PendingUpdate,
+    UpdateCheckError,
+    VelopackError,
+    VelopackUpdater,
+    check_for_update,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,3 +133,55 @@ class UpdateCheckWorker(QThread):
                 self.upToDate.emit()
             else:
                 self.updateAvailable.emit(release)
+
+
+class VelopackCheckWorker(QThread):
+    """Checks for a Velopack update off the UI thread."""
+
+    updateAvailable = Signal(object)  # PendingUpdate
+    upToDate = Signal()
+    checkFailed = Signal(str)
+
+    def __init__(self, updater: VelopackUpdater) -> None:
+        super().__init__()
+        self._updater = updater
+
+    def run(self) -> None:
+        try:
+            update = self._updater.check()
+        except VelopackError as exc:
+            self.checkFailed.emit(str(exc))
+        except Exception:  # noqa: BLE001 - never let the app crash
+            logger.exception("Unexpected Velopack check failure")
+            self.checkFailed.emit("Could not check for updates.")
+        else:
+            if update is None:
+                self.upToDate.emit()
+            else:
+                self.updateAvailable.emit(update)
+
+
+class VelopackDownloadWorker(QThread):
+    """Downloads a Velopack update off the UI thread, reporting progress."""
+
+    progressChanged = Signal(int)  # 0-100
+    downloaded = Signal(object)  # PendingUpdate
+    downloadFailed = Signal(str)
+
+    def __init__(self, updater: VelopackUpdater, update: PendingUpdate) -> None:
+        super().__init__()
+        self._updater = updater
+        self._update = update
+
+    def run(self) -> None:
+        try:
+            self._updater.download(
+                self._update, progress=lambda pct: self.progressChanged.emit(int(pct))
+            )
+        except VelopackError as exc:
+            self.downloadFailed.emit(str(exc))
+        except Exception:  # noqa: BLE001 - never let the app crash
+            logger.exception("Unexpected Velopack download failure")
+            self.downloadFailed.emit("The update could not be downloaded.")
+        else:
+            self.downloaded.emit(self._update)

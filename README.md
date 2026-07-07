@@ -31,8 +31,9 @@ Help → About — and only when you click it.
 - Robust error handling: corrupt/missing images are skipped (with a report),
   never crash the app; existing files are never overwritten without confirmation
 - Remembers your settings, window layout, and last-used folders between runs
-- Manual **Check for Updates** (Help → About) against GitHub releases — opens
-  the download page in your browser; never downloads or installs anything itself
+- **In-app updates** on Windows (Help → About → Check for Updates): the
+  installed build downloads only what changed and installs on restart. Other
+  builds fall back to opening the download page. Always user-initiated.
 
 An example output is included at
 [examples/example_contact_sheet.pdf](examples/example_contact_sheet.pdf)
@@ -91,10 +92,11 @@ More in [docs/DEVELOPER.md](docs/DEVELOPER.md) and
 
 ## Security & privacy
 
-- Offline by default; the **only** network access is the manual
-  "Check for Updates" button in the About dialog (one HTTPS request to the
-  GitHub API, only when clicked; the result is a link opened in your browser —
-  nothing is ever downloaded or installed automatically)
+- Offline by default; the **only** network access is the user-initiated
+  "Check for Updates" button in the About dialog. On the installed Windows
+  build this downloads a signed-by-hash Velopack package and installs it on
+  restart; other builds just open the download page. Nothing is ever
+  downloaded or installed in the background.
 - Images are decoded through one hardened path that rejects decompression
   bombs and treats corrupt files as skippable, never fatal
 - Existing files are never overwritten without explicit confirmation

@@ -15,14 +15,43 @@ pip install -e .[dev]
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-Output: `dist\PDFTileGenerator\PDFTileGenerator.exe`. Zip the
-`PDFTileGenerator` folder for distribution.
+Output: `dist\PDFTileGenerator\PDFTileGenerator.exe`.
+
+### Windows installer + self-updates (Velopack)
+
+The published Windows release is a [Velopack](https://velopack.io) installer
+that supports in-app delta updates. To build it locally you need the .NET SDK
+(for the `vpk` tool):
+
+```powershell
+dotnet tool install -g vpk
+pyinstaller pdf_tile_generator.spec --noconfirm
+# Optional, enables delta generation: pull the previous release's packages
+vpk download github --repoUrl https://github.com/jojo024/pdf-tile-generator
+vpk pack --packId PdfTileGenerator --packVersion 1.3.0 `
+  --packDir dist\PDFTileGenerator --mainExe PDFTileGenerator.exe `
+  --packTitle "PDF Tile Generator" --packAuthors "jojo024"
+```
+
+Output (in `Releases\`): `PdfTileGenerator-win-Setup.exe` (installer),
+`PdfTileGenerator-win-Portable.zip`, `PdfTileGenerator-<ver>-full.nupkg`
+(+ `-delta` from the second release on), and the feed files (`RELEASES`,
+`releases.win.json`, `assets.win.json`). All of these must be attached to the
+GitHub release so the in-app updater's `GithubSource` can find them — CI does
+this automatically (`.github/workflows/release.yml`).
+
+**How self-update works:** the app calls Velopack's startup hook first
+(`update/velopack_update.py`), and Help → About → Check for Updates uses
+`UpdateManager` + `GithubSource` to fetch, download (delta when possible), and
+apply on restart. Only builds installed via `Setup.exe` self-update; the
+portable zip and source runs fall back to opening the download page.
 
 Notes:
-- SmartScreen will warn on unsigned executables. For public distribution,
-  sign with `signtool` and an Authenticode certificate.
-- For an installer, point [Inno Setup](https://jrsoftware.org/isinfo.php) at
-  the `dist\PDFTileGenerator` folder.
+- SmartScreen warns on unsigned installers and on each self-update. For a
+  smooth experience, sign with an Authenticode certificate via
+  `vpk pack --signParams` / `--signTemplate`.
+- The first Velopack release has no delta (nothing to diff against); delta
+  updates begin from the second release onward.
 
 ## macOS
 

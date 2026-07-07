@@ -2,15 +2,20 @@
 # Build with:  pyinstaller pdf_tile_generator.spec
 # Produces a windowed (no console) one-folder build in dist/PDFTileGenerator.
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 hiddenimports = collect_submodules("reportlab.pdfbase")
+
+# velopack ships a native extension (.pyd) plus py.typed; collect_all grabs the
+# binary and data files so the update SDK works in the packaged build.
+velo_datas, velo_binaries, velo_hiddenimports = collect_all("velopack")
+hiddenimports += velo_hiddenimports
 
 a = Analysis(
     ["pdf_tile_generator/app/main.py"],
     pathex=["."],
-    binaries=[],
-    datas=[],
+    binaries=velo_binaries,
+    datas=velo_datas,
     hiddenimports=hiddenimports,
     excludes=[
         # Trim unused Qt modules to shrink the build.
@@ -54,6 +59,6 @@ app = BUNDLE(
     bundle_identifier="org.pdftilegenerator.app",
     info_plist={
         "NSHighResolutionCapable": True,
-        "CFBundleShortVersionString": "1.2.0",
+        "CFBundleShortVersionString": "1.3.0",
     },
 )

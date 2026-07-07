@@ -9,15 +9,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from pdf_tile_generator import APP_NAME, __version__
-from pdf_tile_generator.gui.workers import UpdateCheckWorker
+from pdf_tile_generator.gui.workers import (
+    UpdateCheckWorker,
+    VelopackCheckWorker,
+    VelopackDownloadWorker,
+)
 from pdf_tile_generator.pdf.generator import GenerationResult
-from pdf_tile_generator.update import ReleaseInfo
+from pdf_tile_generator.update import PendingUpdate, ReleaseInfo, VelopackUpdater
 
 
 def show_error(parent: QWidget | None, title: str, message: str) -> None:
@@ -61,40 +66,56 @@ def show_generation_success(parent: QWidget | None, result: GenerationResult) ->
 
 
 class AboutDialog(QDialog):
-    """About box with version info and a manual "Check for Updates" button.
+    """About box with version info and a "Check for Updates" button.
 
-    The update check is the application's only network access and never runs
-    without this explicit click. When a newer release exists, the user gets a
-    button that opens the release page in the browser - nothing is downloaded
-    or installed automatically.
+    Two update paths, chosen automatically:
+
+    * **Installed build (Velopack):** checking, downloading (delta when
+      possible), and installing all happen in-app; the user never re-downloads
+      the whole program. A progress bar shows the download, then a restart
+      applies it.
+    * **Source or portable build:** falls back to the manual flow - checking
+      the GitHub API and opening the release page in the browser.
+
+    Either way the network is only touched when the user clicks the button.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setMinimumWidth(420)
-        self._worker: UpdateCheckWorker | None = None
-        self._release: ReleaseInfo | None = None
+        self.setMinimumWidth(440)
+        self._updater = VelopackUpdater()
+        self._can_self_update = self._updater.is_available()
+        self._worker: QDialog | None = None  # active QThread (typed loosely)
+        self._release: ReleaseInfo | None = None  # manual-flow result
+        self._pending: PendingUpdate | None = None  # velopack-flow result
+        self._downloaded = False
 
+        update_note = (
+            "This installed copy can update itself: it downloads only what "
+            "changed and installs on restart."
+            if self._can_self_update
+            else "Offline by default — no telemetry, no automatic updates. The only "
+            "network access is the update check below, and only when you click it."
+        )
         body = QLabel(
             f"<h3>{APP_NAME} {__version__}</h3>"
             "<p>Create printable PDF contact sheets: image tiles with captions "
             "generated from filenames.</p>"
-            "<p>Offline by default — no telemetry, no automatic updates. The only "
-            "network access is the update check below, and only when you click it.</p>"
+            f"<p>{update_note}</p>"
             "<p>Built with PySide6, ReportLab, and Pillow.</p>"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self.check_button = QPushButton("Check for Updates")
-        self.check_button.setToolTip(
-            "Contact github.com once to see whether a newer version exists"
-        )
         self.check_button.clicked.connect(self._start_check)
-        self.download_button = QPushButton("Open Download Page")
-        self.download_button.setVisible(False)
-        self.download_button.clicked.connect(self._open_download_page)
+        self.action_button = QPushButton()  # "Download & Install" or "Open Download Page"
+        self.action_button.setVisible(False)
+        self.action_button.clicked.connect(self._on_action)
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self.progress.setRange(0, 100)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
 
@@ -104,37 +125,55 @@ class AboutDialog(QDialog):
 
         update_row = QHBoxLayout()
         update_row.addWidget(self.check_button)
-        update_row.addWidget(self.download_button)
+        update_row.addWidget(self.action_button)
         update_row.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.addWidget(body)
         layout.addLayout(update_row)
+        layout.addWidget(self.progress)
         layout.addWidget(self.status_label)
         close_row = QHBoxLayout()
         close_row.addStretch(1)
         close_row.addWidget(close_button)
         layout.addLayout(close_row)
 
+    # --------------------------------------------------------------- checking
+
     def _start_check(self) -> None:
         if self._worker is not None:
             return
         self.check_button.setEnabled(False)
-        self.download_button.setVisible(False)
+        self.action_button.setVisible(False)
+        self.progress.setVisible(False)
         self.status_label.setText("Checking for updates…")
-        self._worker = UpdateCheckWorker()
-        self._worker.updateAvailable.connect(self._on_update_available)
-        self._worker.upToDate.connect(self._on_up_to_date)
-        self._worker.checkFailed.connect(self._on_check_failed)
-        self._worker.finished.connect(self._on_check_finished)
-        self._worker.start()
+        if self._can_self_update:
+            worker = VelopackCheckWorker(self._updater)
+            worker.updateAvailable.connect(self._on_velopack_update_available)
+        else:
+            worker = UpdateCheckWorker()
+            worker.updateAvailable.connect(self._on_manual_update_available)
+        worker.upToDate.connect(self._on_up_to_date)
+        worker.checkFailed.connect(self._on_check_failed)
+        worker.finished.connect(self._on_check_finished)
+        self._worker = worker
+        worker.start()
 
-    def _on_update_available(self, release: ReleaseInfo) -> None:
+    def _on_manual_update_available(self, release: ReleaseInfo) -> None:
         self._release = release
         self.status_label.setText(
             f"Version {release.version} is available (you have {__version__})."
         )
-        self.download_button.setVisible(True)
+        self.action_button.setText("Open Download Page")
+        self.action_button.setVisible(True)
+
+    def _on_velopack_update_available(self, update: PendingUpdate) -> None:
+        self._pending = update
+        self.status_label.setText(
+            f"Version {update.version} is available (you have {__version__})."
+        )
+        self.action_button.setText("Download && Install")
+        self.action_button.setVisible(True)
 
     def _on_up_to_date(self) -> None:
         self.status_label.setText(f"You are up to date ({__version__}).")
@@ -143,18 +182,73 @@ class AboutDialog(QDialog):
         self.status_label.setText(message)
 
     def _on_check_finished(self) -> None:
+        self._clear_worker()
+        self.check_button.setEnabled(True)
+
+    # ------------------------------------------------------------ downloading
+
+    def _on_action(self) -> None:
+        if self._can_self_update and self._pending is not None:
+            if self._downloaded:
+                self._apply_update()
+            else:
+                self._start_download()
+        elif self._release is not None:
+            QDesktopServices.openUrl(QUrl(self._release.url))
+
+    def _start_download(self) -> None:
+        if self._worker is not None or self._pending is None:
+            return
+        self.action_button.setEnabled(False)
+        self.check_button.setEnabled(False)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self.status_label.setText("Downloading update…")
+        worker = VelopackDownloadWorker(self._updater, self._pending)
+        worker.progressChanged.connect(self.progress.setValue)
+        worker.downloaded.connect(self._on_downloaded)
+        worker.downloadFailed.connect(self._on_download_failed)
+        worker.finished.connect(self._clear_worker)
+        self._worker = worker
+        worker.start()
+
+    def _on_downloaded(self, _update: PendingUpdate) -> None:
+        self._downloaded = True
+        self.progress.setValue(100)
+        self.status_label.setText(
+            "Update downloaded. Click “Restart & Install” to finish — the app "
+            "will close and reopen on the new version."
+        )
+        self.action_button.setText("Restart && Install")
+        self.action_button.setEnabled(True)
+        self.check_button.setEnabled(True)
+
+    def _on_download_failed(self, message: str) -> None:
+        self.progress.setVisible(False)
+        self.status_label.setText(message)
+        self.action_button.setEnabled(True)
+        self.check_button.setEnabled(True)
+
+    def _apply_update(self) -> None:
+        if self._pending is None:
+            return
+        self.status_label.setText("Restarting to install the update…")
+        try:
+            self._updater.apply_and_restart(self._pending)  # does not return
+        except Exception as exc:  # noqa: BLE001
+            self.status_label.setText(str(exc))
+
+    # -------------------------------------------------------------- lifecycle
+
+    def _clear_worker(self) -> None:
         if self._worker is not None:
             self._worker.deleteLater()
             self._worker = None
-        self.check_button.setEnabled(True)
-
-    def _open_download_page(self) -> None:
-        if self._release is not None:
-            QDesktopServices.openUrl(QUrl(self._release.url))
 
     def closeEvent(self, event) -> None:  # noqa: ANN001 - Qt override
-        if self._worker is not None:
-            self._worker.wait(3000)
+        worker = self._worker
+        if worker is not None:
+            worker.wait(3000)
         super().closeEvent(event)
 
 
