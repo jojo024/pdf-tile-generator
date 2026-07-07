@@ -59,6 +59,6 @@ app = BUNDLE(
     bundle_identifier="org.pdftilegenerator.app",
     info_plist={
         "NSHighResolutionCapable": True,
-        "CFBundleShortVersionString": "1.3.0",
+        "CFBundleShortVersionString": "1.3.1",
     },
 )

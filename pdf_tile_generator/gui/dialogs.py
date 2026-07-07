@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -248,7 +250,14 @@ class AboutDialog(QDialog):
     def closeEvent(self, event) -> None:  # noqa: ANN001 - Qt override
         worker = self._worker
         if worker is not None:
-            worker.wait(3000)
+            # Detach signals first so a download that finishes after the dialog
+            # is gone cannot call back into a destroyed widget, then wait for
+            # the thread to actually stop before returning.
+            with contextlib.suppress(RuntimeError, TypeError):
+                worker.disconnect()
+            self._worker = None
+            worker.wait(15000)
+            worker.deleteLater()
         super().closeEvent(event)
 
 

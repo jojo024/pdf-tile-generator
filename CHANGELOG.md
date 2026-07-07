@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1 — 2026-07-07
+
+### Fixed
+- Closing the About dialog while an update download is in progress no longer
+  risks a late callback into the destroyed dialog; signals are detached and
+  the download thread is awaited on close.
+
+### Notes
+- First release delivered as a **delta** to installed 1.3.0 users — the
+  in-app updater downloads only the changed bytes.
+
 ## 1.3.0 — 2026-07-07
 
 ### Added
