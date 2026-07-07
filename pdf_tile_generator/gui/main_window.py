@@ -137,8 +137,14 @@ class MainWindow(QMainWindow):
         self._qsettings.setValue("lastImageDir", str(Path(paths[0]).parent))
         self.image_list.add_images(paths)
 
-    def _refresh_preview(self) -> None:
+    def _current_settings(self) -> ProjectSettings:
+        """Panel settings plus state owned by the image list (extra columns)."""
         settings = self.settings_panel.settings()
+        settings.caption.extra_fields = self.image_list.extra_columns()
+        return settings
+
+    def _refresh_preview(self) -> None:
+        settings = self._current_settings()
         count = self.image_list.count()
         self.preview_panel.update_preview(settings, count)
         if count:
@@ -149,10 +155,11 @@ class MainWindow(QMainWindow):
     def _start_generation(self) -> None:
         if self._worker is not None:
             return  # already generating
-        settings = self.settings_panel.settings()
+        settings = self._current_settings()
         paths = self.image_list.paths()
         captions = self.image_list.captions()
         descriptions = self.image_list.descriptions()
+        extra_values = self.image_list.extra_values()
         if not paths:
             dialogs.show_warning(self, "No images", "Add at least one image first.")
             return
@@ -169,8 +176,8 @@ class MainWindow(QMainWindow):
             return
 
         jobs = [
-            TileJob(path=p, caption=c, description=d)
-            for p, c, d in zip(paths, captions, descriptions, strict=True)
+            TileJob(path=p, caption=c, description=d, extras=e)
+            for p, c, d, e in zip(paths, captions, descriptions, extra_values, strict=True)
         ]
         self._worker = PdfWorker(settings, jobs)
         self._worker.progressChanged.connect(self._on_progress)
@@ -238,7 +245,9 @@ class MainWindow(QMainWindow):
         raw = self._qsettings.value("projectSettings")
         if raw:
             try:
-                self.settings_panel.load(ProjectSettings.from_dict(json.loads(raw)))
+                restored = ProjectSettings.from_dict(json.loads(raw))
+                self.settings_panel.load(restored)
+                self.image_list.set_extra_columns(restored.caption.extra_fields)
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Ignoring corrupt saved settings")
         self.image_list.set_title_case(self.settings_panel.title_case_check.isChecked())
@@ -250,6 +259,6 @@ class MainWindow(QMainWindow):
         self._qsettings.setValue("windowGeometry", self.saveGeometry())
         self._qsettings.setValue("splitterState", self._splitter.saveState())
         self._qsettings.setValue(
-            "projectSettings", json.dumps(self.settings_panel.settings().to_dict())
+            "projectSettings", json.dumps(self._current_settings().to_dict())
         )
         super().closeEvent(event)

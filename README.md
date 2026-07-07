@@ -19,8 +19,10 @@ Help → About — and only when you click it.
 - Paper sizes A4 / Letter / Legal / A3, **custom dimensions**, or **Auto** —
   the page grows to fit the grid at your chosen tile size; portrait or
   landscape, adjustable margins, tile spacing, and caption spacing
-- Per-image **descriptions** rendered under captions, with **CSV
-  import/export** for bulk editing (`filename,caption,description`)
+- Per-image **descriptions** rendered under captions, plus **custom columns**
+  (Add Column…) for any additional information under each tile
+- **CSV import/export** for bulk editing (`filename,caption,description,…`);
+  unknown CSV headers become custom columns automatically
 - Image placement: **fit within tile** or **crop to fill** (aspect ratio always preserved)
 - Caption options: font, size, alignment, color, max lines, wrapping, Title Case
 - **Per-image caption editing** — double-click any caption in the list

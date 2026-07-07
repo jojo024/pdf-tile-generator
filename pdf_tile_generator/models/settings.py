@@ -135,6 +135,9 @@ class CaptionSettings:
     description_enabled: bool = True
     description_font_size: float = 8.0
     description_max_lines: int = 2
+    #: Names of user-defined extra columns; each renders as one more text
+    #: block under the tile, styled like the description.
+    extra_fields: list[str] = field(default_factory=list)
 
     @property
     def line_height(self) -> float:
@@ -147,10 +150,12 @@ class CaptionSettings:
         return self.description_font_size * 1.25
 
     def block_height(self) -> float:
-        """Total vertical space reserved for the caption + description block."""
+        """Total vertical space reserved for caption, description, and extras."""
         height = self.line_height * max(1, self.max_lines)
+        block = 2.0 + self.description_line_height * max(1, self.description_max_lines)
         if self.description_enabled:
-            height += 2.0 + self.description_line_height * max(1, self.description_max_lines)
+            height += block
+        height += block * len(self.extra_fields)
         return height
 
 
@@ -192,6 +197,10 @@ class ProjectSettings:
                 try:
                     if isinstance(current, Enum):
                         value = type(current)(value)
+                    elif isinstance(current, list):
+                        if not isinstance(value, list):
+                            continue  # keep the default for malformed values
+                        value = [str(item) for item in value]
                     elif isinstance(current, bool):
                         value = bool(value)
                     elif isinstance(current, int) and not isinstance(current, bool):

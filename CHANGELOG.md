@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 — 2026-07-07
+
+### Added
+- **Custom columns**: "Add Column…" creates additional per-image fields
+  (e.g. Location, Client); each renders as another text line under the tile,
+  below the description. Columns persist between sessions and can be removed
+  with "Remove Column…".
+- CSV import/export includes custom columns; unknown CSV headers
+  automatically create matching columns on import.
+
 ## 1.1.0 — 2026-07-07
 
 ### Added

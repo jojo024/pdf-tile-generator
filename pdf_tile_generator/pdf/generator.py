@@ -49,11 +49,17 @@ class PDFGenerationCancelled(Exception):
 
 @dataclass
 class TileJob:
-    """One image to place in the PDF, with its caption and description text."""
+    """One image to place in the PDF, with its caption and extra text.
+
+    ``extras`` holds the values of the user-defined extra columns, in the
+    same order as ``CaptionSettings.extra_fields``; each renders as one more
+    text block under the description.
+    """
 
     path: str
     caption: str
     description: str = ""
+    extras: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -345,7 +351,7 @@ class PDFGenerator:
         space the tile cell has around it.
         """
         settings = self._settings.caption
-        if not job.caption and not job.description:
+        if not job.caption and not job.description and not any(job.extras):
             return
         max_width = tile.width - 2 * self._settings.image.tile_padding
 
@@ -378,18 +384,26 @@ class PDFGenerator:
             next_baseline = draw_lines(lines, settings.font_size, text_top - settings.font_size)
             last_baseline = next_baseline + settings.line_height
             text_top = last_baseline - settings.font_size * 0.25 - 2.0
+        # Description and any user-defined extra fields share one style and
+        # stack downward as further small-text blocks.
+        small_blocks: list[str] = []
         if settings.description_enabled and job.description:
+            small_blocks.append(job.description)
+        small_blocks.extend(text for text in job.extras if text)
+        for text in small_blocks:
             lines = _wrap_caption(
-                job.description,
+                text,
                 font_name,
                 settings.description_font_size,
                 max_width,
                 settings.description_max_lines,
                 settings.wrap_text,
             )
-            draw_lines(
+            next_baseline = draw_lines(
                 lines, settings.description_font_size, text_top - settings.description_font_size
             )
+            last_baseline = next_baseline + settings.description_line_height
+            text_top = last_baseline - settings.description_font_size * 0.25 - 2.0
         canvas.restoreState()
 
     @staticmethod

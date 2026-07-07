@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -37,7 +38,8 @@ COL_THUMB = 0
 COL_FILENAME = 1
 COL_CAPTION = 2
 COL_DESCRIPTION = 3
-_COLUMN_COUNT = 4
+_COLUMN_COUNT = 4  # fixed columns; user-defined extra columns start here
+_RESERVED_NAMES = {"preview", "filename", "caption", "description"}
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole
 _CUSTOM_CAPTION_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -107,6 +109,7 @@ class ImageListWidget(QWidget):
         super().__init__(parent)
         self._title_case = True
         self._updating = False  # guards programmatic caption writes
+        self._extra_columns: list[str] = []  # user-defined column names
         self._thumbnail_signals = ThumbnailSignals()
         self._thumbnail_signals.ready.connect(self._on_thumbnail_ready)
         self._thumbnail_signals.failed.connect(self._on_thumbnail_failed)
@@ -122,13 +125,19 @@ class ImageListWidget(QWidget):
         self.down_button = QPushButton("Move Down")
         self.import_csv_button = QPushButton("Import CSV…")
         self.import_csv_button.setToolTip(
-            "Bulk-load captions and descriptions from a CSV file with columns: "
-            "filename, caption, description"
+            "Bulk-load captions, descriptions, and extra fields from a CSV file "
+            "(filename, caption, description, plus your own column names)"
         )
         self.export_csv_button = QPushButton("Export CSV…")
         self.export_csv_button.setToolTip(
-            "Save the current captions and descriptions to a CSV file"
+            "Save the current captions, descriptions, and extra columns to a CSV file"
         )
+        self.add_column_button = QPushButton("Add Column…")
+        self.add_column_button.setToolTip(
+            "Add a custom column; its text appears under the tile, below the description"
+        )
+        self.remove_column_button = QPushButton("Remove Column…")
+        self.remove_column_button.setToolTip("Remove one of your custom columns")
         self.remove_button.setToolTip("Remove the selected images from the list")
         self.up_button.setToolTip("Move the selected image up (Alt+Up)")
         self.down_button.setToolTip("Move the selected image down (Alt+Down)")
@@ -141,6 +150,8 @@ class ImageListWidget(QWidget):
         self.down_button.clicked.connect(lambda: self._move_selected(1))
         self.import_csv_button.clicked.connect(self._import_csv_dialog)
         self.export_csv_button.clicked.connect(self._export_csv_dialog)
+        self.add_column_button.clicked.connect(self._add_column_dialog)
+        self.remove_column_button.clicked.connect(self._remove_column_dialog)
 
         buttons = QHBoxLayout()
         for button in (
@@ -151,6 +162,8 @@ class ImageListWidget(QWidget):
             self.down_button,
             self.import_csv_button,
             self.export_csv_button,
+            self.add_column_button,
+            self.remove_column_button,
         ):
             buttons.addWidget(button)
         buttons.addStretch(1)
@@ -178,6 +191,97 @@ class ImageListWidget(QWidget):
         return [
             self.table.item(row, COL_DESCRIPTION).text() for row in range(self.table.rowCount())
         ]
+
+    def extra_columns(self) -> list[str]:
+        """Names of the user-defined extra columns, in display order."""
+        return list(self._extra_columns)
+
+    def extra_values(self) -> list[list[str]]:
+        """Per-row values of the extra columns, aligned with extra_columns()."""
+        return [
+            [
+                self.table.item(row, _COLUMN_COUNT + index).text()
+                for index in range(len(self._extra_columns))
+            ]
+            for row in range(self.table.rowCount())
+        ]
+
+    # -------------------------------------------------------- extra columns
+
+    def set_extra_columns(self, names: list[str]) -> None:
+        """Replace all extra columns (used when restoring saved settings)."""
+        for name in list(reversed(self._extra_columns)):
+            self.remove_column(name)
+        for name in names:
+            self.add_column(name)
+
+    def add_column(self, name: str) -> bool:
+        """Add a custom column; returns False for empty/duplicate/reserved names."""
+        name = name.strip()
+        lower = name.lower()
+        if not name or lower in _RESERVED_NAMES:
+            return False
+        if lower in (existing.lower() for existing in self._extra_columns):
+            return False
+        column = _COLUMN_COUNT + len(self._extra_columns)
+        self._extra_columns.append(name)
+        self._updating = True
+        try:
+            self.table.setColumnCount(column + 1)
+            header_item = QTableWidgetItem(name)
+            self.table.setHorizontalHeaderItem(column, header_item)
+            self.table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeMode.Stretch
+            )
+            for row in range(self.table.rowCount()):
+                item = QTableWidgetItem("")
+                item.setToolTip(f'"{name}" text shown under the tile (double-click to edit)')
+                self.table.setItem(row, column, item)
+        finally:
+            self._updating = False
+        self.listChanged.emit()
+        return True
+
+    def remove_column(self, name: str) -> None:
+        """Remove a custom column by name."""
+        if name not in self._extra_columns:
+            return
+        index = self._extra_columns.index(name)
+        self._extra_columns.pop(index)
+        self.table.removeColumn(_COLUMN_COUNT + index)
+        self.listChanged.emit()
+
+    def _add_column_dialog(self) -> None:
+        name, ok = QInputDialog.getText(
+            self,
+            "Add column",
+            "Column name (its text appears under each tile):",
+        )
+        if not ok or not name.strip():
+            return
+        if not self.add_column(name):
+            QMessageBox.warning(
+                self,
+                "Cannot add column",
+                f'"{name.strip()}" is already used or reserved. Choose another name.',
+            )
+
+    def _remove_column_dialog(self) -> None:
+        if not self._extra_columns:
+            QMessageBox.information(
+                self, "No custom columns", "There is no custom column to remove."
+            )
+            return
+        name, ok = QInputDialog.getItem(
+            self,
+            "Remove column",
+            "Custom column to remove (its text is discarded):",
+            self._extra_columns,
+            0,
+            False,
+        )
+        if ok and name:
+            self.remove_column(name)
 
     def count(self) -> int:
         """Number of images in the list."""
@@ -217,6 +321,12 @@ class ImageListWidget(QWidget):
                 self.table.setItem(row, COL_FILENAME, name_item)
                 self.table.setItem(row, COL_CAPTION, caption_item)
                 self.table.setItem(row, COL_DESCRIPTION, description_item)
+                for index, column_name in enumerate(self._extra_columns):
+                    item = QTableWidgetItem("")
+                    item.setToolTip(
+                        f'"{column_name}" text shown under the tile (double-click to edit)'
+                    )
+                    self.table.setItem(row, _COLUMN_COUNT + index, item)
                 pool.start(ThumbnailTask(path, self._thumbnail_signals))
         finally:
             self._updating = False
@@ -254,12 +364,12 @@ class ImageListWidget(QWidget):
             self._updating = False
         self.table.clearSelection()
         for row in rows:
-            for column in range(_COLUMN_COUNT):
+            for column in range(self.table.columnCount()):
                 self.table.item(row + delta, column).setSelected(True)
         self.listChanged.emit()
 
     def _swap_rows(self, row_a: int, row_b: int) -> None:
-        for column in range(_COLUMN_COUNT):
+        for column in range(self.table.columnCount()):
             item_a = self.table.takeItem(row_a, column)
             item_b = self.table.takeItem(row_b, column)
             self.table.setItem(row_a, column, item_b)
@@ -289,18 +399,28 @@ class ImageListWidget(QWidget):
     # ------------------------------------------------------------ CSV bulk
 
     def apply_csv(self, path: str) -> int:
-        """Apply captions/descriptions from a CSV file; returns rows matched.
+        """Apply captions/descriptions/extra fields from a CSV; returns rows matched.
+
+        Unknown CSV columns are added as new extra columns automatically, so a
+        spreadsheet with e.g. a "Location" column just works.
 
         Raises:
             CaptionCSVError: if the file is unreadable or malformed.
         """
-        rows = read_caption_csv(path)
+        data = read_caption_csv(path)
+        for name in data.extra_fields:
+            if name.lower() not in (existing.lower() for existing in self._extra_columns):
+                self.add_column(name)
+        column_by_lower = {
+            name.lower(): _COLUMN_COUNT + index
+            for index, name in enumerate(self._extra_columns)
+        }
         matched = 0
         self._updating = True
         try:
             for row in range(self.table.rowCount()):
                 image_path = self.table.item(row, COL_FILENAME).data(_PATH_ROLE)
-                entry = lookup(rows, image_path)
+                entry = lookup(data, image_path)
                 if entry is None:
                     continue
                 matched += 1
@@ -310,6 +430,9 @@ class ImageListWidget(QWidget):
                     caption_item.setData(_CUSTOM_CAPTION_ROLE, True)
                 if entry.description is not None:
                     self.table.item(row, COL_DESCRIPTION).setText(entry.description)
+                for field_name, value in entry.extras.items():
+                    if value is not None and field_name in column_by_lower:
+                        self.table.item(row, column_by_lower[field_name]).setText(value)
         finally:
             self._updating = False
         return matched
@@ -346,9 +469,17 @@ class ImageListWidget(QWidget):
         )
         if not path:
             return
-        entries = list(zip(self.paths(), self.captions(), self.descriptions(), strict=True))
+        entries = list(
+            zip(
+                self.paths(),
+                self.captions(),
+                self.descriptions(),
+                self.extra_values(),
+                strict=True,
+            )
+        )
         try:
-            write_caption_csv(path, entries)
+            write_caption_csv(path, entries, extra_fields=self.extra_columns())
         except CaptionCSVError as exc:
             QMessageBox.warning(self, "Could not export CSV", str(exc))
 
