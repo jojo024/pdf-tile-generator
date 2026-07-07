@@ -3,9 +3,9 @@ name: Release builds
 # Builds standalone executables for Windows, macOS, and Linux when a version
 # tag (v*) is pushed, and attaches them to the GitHub release for that tag.
 
+# Creating a release (gh release create) both creates the tag and publishes,
+# so triggering on push-of-tag as well would run every build twice.
 on:
-  push:
-    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch: {}  # run manually with --ref <tag> to rebuild a release's assets
